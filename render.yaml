@@ -1,0 +1,10 @@
+# Single-service deploy: the Node server builds and serves the React app
+# AND runs Socket.IO on the same origin. One service, one URL, no CORS setup.
+services:
+  - type: web
+    name: persian-spy-game
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /health

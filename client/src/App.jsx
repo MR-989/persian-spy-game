@@ -18,6 +18,10 @@ export default function App() {
   const [code, setCode] = useState("");
   const [duration, setDuration] = useState(180);
   const [category, setCategory] = useState("all");
+  const [mode, setMode] = useState("presential");
+  const [askText, setAskText] = useState("");
+  const [askTarget, setAskTarget] = useState("");
+  const [answerText, setAnswerText] = useState("");
   const [room, setRoom] = useState(null);
   const [playerId, setPlayerId] = useState(null);
   const [myWord, setMyWord] = useState(null);
@@ -54,17 +58,34 @@ export default function App() {
     if (!res?.ok) return setError(res?.error || "خطا رخ داد");
     setError(""); setRoom(res.room); setPlayerId(res.playerId);
   };
-  const createRoom = () => socket.emit("room:create", { name, duration, category }, handleResponse);
+  const createRoom = () => socket.emit("room:create", { name, duration, category, mode }, handleResponse);
   const joinRoom = () => socket.emit("room:join", { name, code }, handleResponse);
   const startGame = () => socket.emit("game:start", res => !res?.ok && setError(res.error));
   const seenWord = () => socket.emit("word:seen");
   const vote = (id) => socket.emit("vote:cast", { targetId: id }, res => !res?.ok && setError(res.error));
   const reset = () => socket.emit("game:reset");
+  const sendAsk = () => {
+    if (!askTarget || !askText.trim()) return;
+    socket.emit("turn:ask", { targetId: askTarget, text: askText }, res => {
+      if (res?.ok) { setAskText(""); setAskTarget(""); } else setError(res?.error || "");
+    });
+  };
+  const sendAnswer = () => {
+    if (!answerText.trim()) return;
+    socket.emit("turn:answer", { text: answerText }, res => {
+      if (res?.ok) setAnswerText(""); else setError(res?.error || "");
+    });
+  };
+  const forceVoting = () => socket.emit("game:toVoting");
 
   if (!room) return <main className="page"><section className="panel hero">
     <h1>بازی جاسوس فارسی</h1><p>اتاق بسازید یا با کد وارد شوید. یکی یا دو نفر جاسوس می‌شوند.</p>
     <input placeholder="نام بازیکن" value={name} onChange={e=>setName(e.target.value)} />
     <div className="row"><select value={category} onChange={e=>setCategory(e.target.value)}>{categories.map(c=><option key={c[0]} value={c[0]}>{c[1]}</option>)}</select><input type="number" min="60" value={duration} onChange={e=>setDuration(e.target.value)} /></div>
+    <div className="modes">
+      <button className={mode==="presential"?"mode on":"mode"} onClick={()=>setMode("presential")}>حضوری (سوال‌ها رو در رو      )</button>
+      <button className={mode==="text"?"mode on":"mode"} onClick={()=>setMode("text")}>آنلاین نوشتاری (نوبتی)</button>
+    </div>
     <button onClick={createRoom} disabled={!connected}>ساخت اتاق</button>
     <div className="divider">یا</div>
     <input placeholder="کد اتاق" value={code} onChange={e=>setCode(e.target.value.toUpperCase())} />
@@ -93,11 +114,53 @@ export default function App() {
       <PlayerList room={room}/><p>بازی وقتی شروع می‌شود که همه «دیدم» را بزنند.</p>
     </>}
 
-    {room.status === "playing" && <>
+    {room.status === "playing" && room.mode !== "text" && <>
       <h2>سوال بپرسید و جاسوس را پیدا کنید</h2>
       <div className="timer">{Math.floor(room.timer/60)}:{String(room.timer%60).padStart(2,"0")}</div>
       <PlayerList room={room}/>
     </>}
+
+    {room.status === "playing" && room.mode === "text" && (() => {
+      const myTurn = room.currentTurnId === playerId;
+      const iOweAnswer = room.pendingTo === playerId;
+      const turnName = room.players.find(p=>p.id===room.currentTurnId)?.name || "";
+      const others = room.players.filter(p => p.id !== playerId);
+      return <>
+        <h2>پرسش و پاسخ نوبتی</h2>
+        <div className="chat">
+          {room.messages.length === 0 && <p className="muted">هنوز سوالی پرسیده نشده.</p>}
+          {room.messages.map((m,i) => (
+            <div className={"msg "+(m.type)} key={i}>
+              <b>{m.fromName}</b>{m.type==="question" ? <> ← {m.toName}</> : null}
+              <span>{m.text}</span>
+            </div>
+          ))}
+        </div>
+
+        {iOweAnswer ? (
+          <div className="turnbox">
+            <p>به سوال پاسخ دهید:</p>
+            <input value={answerText} onChange={e=>setAnswerText(e.target.value)} placeholder="پاسخ شما" />
+            <button onClick={sendAnswer}>ارسال پاسخ</button>
+          </div>
+        ) : myTurn ? (
+          <div className="turnbox">
+            <p>نوبت شماست — یک نفر را انتخاب و سوال بپرسید:</p>
+            <select value={askTarget} onChange={e=>setAskTarget(e.target.value)}>
+              <option value="">— انتخاب بازیکن —</option>
+              {others.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <input value={askText} onChange={e=>setAskText(e.target.value)} placeholder="سوال شما" />
+            <button onClick={sendAsk}>ارسال سوال</button>
+          </div>
+        ) : (
+          <p className="muted">{room.pendingTo ? "در انتظار پاسخ…" : `نوبت ${turnName} است…`}</p>
+        )}
+
+        {isHost && <button className="secondary" onClick={forceVoting}>پایان و شروع رأی‌گیری</button>}
+        <PlayerList room={room}/>
+      </>;
+    })()}
 
     {room.status === "voting" && <>
       <h2>رأی دادن</h2><p>به کسی که فکر می‌کنید جاسوس است رأی دهید.</p>
